@@ -3,7 +3,11 @@ Perl GUI (GTK) examples for EE calculations
 
 Some useful little EE calculators, intended to kind of replace the good old Shure slide rule for calculating reactance
 problems, and ohm's law.
-These are done in perl and GTK and serve as good exmples of how to use the stuff in the perl gui repo.
+These are done in perl and GTK and serve as good exmples of how to use the stuff in the 
+https://github.com/dcfusor/Perl_GUI repo.
+
+The code is cleaner than some, naster than some.  No special effort was made to teach perl here, nor to make it hard
+to figure out.  This is just how I write git 'er done fast throwaway perl code.
 
 I put them in my home/doug/bin directory.  Your placement will be whatever you want - /usr/bin is more generic
 I also provided icons which I put in /usr/share/gnome, and desktop files which you can put in 
