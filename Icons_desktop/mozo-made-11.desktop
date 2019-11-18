@@ -1,0 +1,12 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+Icon=/usr/share/icons/gnome/LC.png
+Icon[en_US]=/usr/share/icons/gnome/LC.png
+Name[en_US]=Reactance calculator
+Exec=/home/doug/bin/reactance
+Comment[en_US]=Slide rule replacement
+Name=Reactance calculator
+Comment=Slide rule replacement

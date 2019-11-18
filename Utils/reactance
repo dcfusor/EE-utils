@@ -1,0 +1,610 @@
+#!/usr/bin/perl
+
+# Here we go again...GPLv2 will do C 2017 Doug Coulter
+# as usual, if I thought it dodgy, I used @@@ in a nearby comment
+
+
+=pod
+Note to self:
+add ariables for "normalized" values to henries, farads, ohms - and do conversions to/from display values
+in the gui2var and var3 gui, as well as add "on changed" redo for the dropdowns so display is always right.
+gui2var  should also count inputs.
+=cut
+
+
+use Modern::Perl '2016'; # we only have 5.18 on this machine?
+use File::Basename 'dirname'; # for knowing where we are (ease for developer) already here
+use Gtk3 -init; # for our GUI
+use Glib  qw(TRUE FALSE); # for periodic events etc
+#use Gtk3::Helper; # allows us to add "watch" callbacks to (file/socket) handles?
+
+# gobject issue is fixed in later distros
+#http://askubuntu.com/questions/319568/i-cant-configure-rhythmbox-as-gobject-introspection-1-is-not-installed for when you can't install gtk3 or glib
+#
+
+#use Storable qw(nstore retrieve); # for (re) storing hash of hashes preset
+#use DBI; # for mySQL interface
+####################################################################
+# GUI variable references to objects
+my $GUIFilename = '/react.glade'; # @@@ use your real Glade filename here
+
+my $builder = Gtk3::Builder->new(); # gtkbuilder object, creates a gui from glade's xml
+my $mainwin; # will be set up in the creation routine
+# put references to any other new created gui objects here for organization
+
+=pod
+Usually I will put my GUI-related variables here, as pairs - one a reference to the widget,
+one the value for that widget if it has one to retrieve or change.  So things look like this:
+
+my $($widgetnamer,$widgetname); # reference to the thing for manipulation, and value
+
+You can reuse the same name for the widget you used in Glade for ID if you like to keep your mind
+free for other stuff.  This is an entirely different namespace.
+Yes, this makes them all globals...the whole GUI is anyway.
+
+=cut
+
+my $debug = 1; # set 1 or 0 to have/stop debug messages
+
+my $twopi = 6.283185307; # more or less
+
+my ($Lvaluer,$Lvalue,$Lnorm); # entry
+my ($Lscaler,$Lscale); # dropdown scale
+my ($Cvaluer,$Cvalue,$Cnorm);
+my ($Cscaler,$Cscale);
+my ($Fvaluer,$Fvalue,$Fnorm);
+my ($Fscaler,$Fscale);
+my ($Zvaluer,$Zvalue,$Znorm);
+my ($Zscaler,$Zscale);
+my $Resetr; # buttonsS
+my $Calculater;
+my $input_count;
+my $EMr; # error monologue reference
+####################################################################
+sub printvars
+{
+if ($debug)
+   {
+	say "Lvalue:$Lvalue";
+	say "Lscale:$Lscale";
+	say "Lnorm:$Lnorm";
+	say "Cvalue:$Cvalue";
+	say "Cscale:$Cscale";
+	say "Cnorm:$Cnorm";
+	say "Fvalue:$Fvalue";
+	say "Fscale:$Fscale";
+    say "Fnorm:$Fnorm";
+	say "zvalue:$Zvalue";
+	say "zscale:$Zscale";
+	say "Znorm:$Znorm\n\n'"
+
+   }
+}
+####################################################################
+# @@@ this has a hardcoded glade filename in a variable - you need to fix that as required
+# @@@ above
+
+sub createguifile # create the gui from xml in a .glade file 
+{ # use this for developer convienience.  Final product should put glade xml
+  # after the __END__ tag and use createguilocal instead
+ $builder->add_from_file(dirname($0) . $GUIFilename); # @@@ set that variable right, dumb ass
+ $mainwin = $builder->get_object('mainwin'); #@@@ assumes main window is called mainwin
+ $builder->connect_signals(undef);
+ #$mainwin->set_screen( $mainwin->get_screen() ); #??? from an example.  Seems redundant?
+ $mainwin->signal_connect(destroy => sub {Gtk3->main_quit});
+ $mainwin->show_all();
+# not so program-specific you couldn't use it again
+}
+####################################################################
+ sub getGUIrefs
+ { # get all the references to the GUI widgets you need here, called in initialize
+   # example:  $widgetnamer = builder->get_object('widgetname'); # or ID?, I make them the same anyway
+   $Lvaluer = $builder->get_object('Lvalue');
+   $Lscaler = $builder->get_object('Lunits');
+   $Cvaluer = $builder->get_object('Cvalue');
+   $Cscaler = $builder->get_object('Cunits');
+   $Fvaluer = $builder->get_object('Fvalue');
+   $Fscaler = $builder->get_object('Funits');
+   $Zvaluer = $builder->get_object('Zvalue');
+   $Zscaler = $builder->get_object('Zunits');
+   $Resetr = $builder->get_object('Reset'); # for completeness, may not need thus
+   $Calculater = $builder->get_object('Calculate');
+   $EMr = $builder->get_object('ErrorMonologue'); # well, it's not like you can argue with it, is it?
+   $EMr->set_transient_for($mainwin); # window to be on top of, avoids warning
+ }
+####################################################################
+ sub var2GUI
+ { # at least for simpler things, this is where you'd stuff all the 
+   # gui elements with the contents of the variables that go with them.
+   $Lvaluer->set_text($Lnorm ? $Lnorm / 10**$Lscale : '');
+   $Lvalue = $Lvaluer->get_text();
+   $Cvaluer->set_text($Cnorm ? $Cnorm / 10**$Cscale : '');
+   $Cvalue = $Cvaluer->get_text();
+   $Fvaluer->set_text($Fnorm ? $Fnorm / 10**$Fscale : '');
+   $Fvalue = $Fvaluer->get_text();
+   $Zvaluer->set_text($Znorm ? $Znorm / 10**$Zscale : '');
+   $Zvalue = $Zvaluer->get_text();
+
+   # not setting the scaling GUI right now
+ }
+####################################################################
+ sub GUI2var
+ { # grab the content of any interesting widgets and put into variables here
+ 	$Lvalue = $Lvaluer->get_text();
+ 	$Lvalue =~ s/[^.e\d]//g; # force all these guys to numeric - could be better regexp
+#    if ($Lvalue eq "") {$Lvalue = 0;}
+    $Lscale = $Lscaler->get_active_id();
+    if ($Lvalue) {$Lnorm = $Lvalue*(10**$Lscale);} # account for dropdown scaling input
+
+ 	$Cvalue = $Cvaluer->get_text();
+ 	$Cvalue =~ s/[^.e\d]//g; # force all these guys to numeric - could be better regexp
+ 	$Cscale = $Cscaler->get_active_id();
+ 	if ($Cvalue) {$Cnorm = $Cvalue*(10**$Cscale);}
+
+ 	$Fvalue = $Fvaluer->get_text();
+ 	$Fscale = $Fscaler->get_active_id();
+ 	$Fvalue =~ s/[^.e\d]//g; # force all these guys to numeric - could be better regexp
+ 	if ($Fvalue) {$Fnorm = $Fvalue * 10**$Fscale};
+
+ 	$Zvalue = $Zvaluer->get_text();
+	$Zvalue =~ s/[^.e\d]//g; # force all these guys to numeric - could be better regexp
+ 	$Zscale = $Zscaler->get_active_id();
+ 	if ($Zvalue) {$Znorm = $Zvalue * 10**$Zscale;}
+
+ 	CountInputs();
+ 	unless ($input_count == 2) { $EMr->show_all(); } # do the error dialog
+ }
+####################################################################
+sub CountInputs
+{
+ $input_count = 0;
+ $input_count++ unless ($Lvalue eq '');
+ $input_count++ unless ($Cvalue eq '');
+ $input_count++ unless ($Fvalue eq '');
+ $input_count++ unless ($Zvalue eq '');
+ 
+ return $input_count;
+}
+####################################################################
+sub clearvars
+{
+	$Lvalue = $Cvalue = $Fvalue = $Zvalue = ''; # make all null
+	$Lnorm = $Cnorm = $Fnorm = $Znorm = ''; #@@@ I may chanbge to zeros?
+	$input_count = 0;  # because why not?
+}
+####################################################################
+sub clearGUI
+{ # just clear the display numbers, don't insert zeros or change scale
+  $Lvaluer->set_text('');
+  $Cvaluer->set_text('');
+  $Fvaluer->set_text('');
+  $Zvaluer->set_text('');
+}
+####################################################################
+sub on_dialogOK_clicked
+{
+	#say "dialog ok button";
+    clearvars();
+	clearGUI();	
+	$EMr->hide();
+}
+####################################################################
+sub on_Calculate_pressed
+{
+	GUI2var(); # get inputs, and normalize to Henries, Farads, Hz, Ohms
+	if (2 == CountInputs()) # should be 6 possible permutations of 2 from 4 imputs
+	{ # we can calculate - make numeric, scale, and pick which combo of inputs we have for calc
+ # going to use a rather slimy way to pick from the permutations (actually combinations, math guy) of inputs
+ # probaby faster than case type statement anyway?  Not that it matters here.
+  say "before calc" if $debug;
+  printvars();
+    if ($Lvalue)
+    { # we have L
+      if (0 != $Cvalue) 
+      { # we have L and C, compute F and Z
+   #   	$Cvalue = $Cvalue*(10**$Cscale); # I put the exponents into the dropbox glade code(!)
+      	$Fnorm =  1/($twopi*sqrt($Lnorm*$Cnorm)); # f = 1/2pi sqrt(LC) - in hz
+      	$Znorm = $twopi * $Fnorm * $Lnorm; # 2pi*FL
+      } elsif  (0 != $Fvalue)
+      { # we have L and F, compute Z and C
+      	$Znorm = $twopi * $Fnorm * $Lnorm; # 2pi*FL
+      	$Cnorm = 1 / (($twopi * $Fnorm)**2 * $Lnorm);
+ 	 #   say "lnorm:$Lnorm Znorm:$Znorm";
+      } elsif (0!= $Zvalue)
+      { # we have L and Z, compute F and C
+       $Fnorm = $Znorm / ($twopi * $Lnorm);
+       $Cnorm = 1 / (($twopi * $Fnorm)**2 * $Lnorm);
+      }
+    } elsif ($Cvalue)    # we had L, else
+     { # we have C and something other than L
+      if (0 != $Fvalue)
+      { # we have C and F, compute Z and L
+       $Znorm = 1 / ($twopi * $Fnorm * $Cnorm);
+     # $Lnorm = $Znorm / ($twopi * $Fnorm); # there's a slicker way to get here without using Z	
+       $Lnorm = (1/($twopi*$Fnorm))**2 / $Cnorm; # takes a lot of digits to show any difference
+      } elsif ($Zvalue)
+      { # we have C and Z compute F and L
+  #    	say "RC case";
+       $Fnorm = 1 / ($twopi * $Znorm * $Cnorm);
+  #     say "Znorm:$Znorm, Cnorm:$Znorm";
+       $Lnorm = 	$Znorm / ($twopi * $Fnorm);
+      } else {say "Oddball error at C and ??? nothing else", exit;}
+ 
+     } elsif ($Fvalue) # end of C and not-L - it'd better be F and Z
+      { # we have F and Z  compute L and C - or the world is broken
+       say "F and Z?";
+       unless ($Zvalue) {say "Had only F, we're blown up", exit;}
+       $Lnorm = 	$Znorm / ($twopi * $Fnorm);
+       $Cnorm = 1 / (($twopi * $Fnorm)**2 * $Lnorm);
+     }
+	} else { $EMr->show_all(); } # do the error dialog
+  
+    say "after calc" if $debug;
+    printvars(); # if debug
+    var2GUI(); # show results
+}
+####################################################################
+sub on_Reset_pressed
+{
+	clearvars();
+	clearGUI();
+}
+####################################################################
+# switch to using this once the gui is more or less settled - the file is easier to change
+# but this is easier to ship.
+sub createguilocal # create the gui from xml in a .glade file 
+{ # put glade xml after the __END__ tag and use createguilocal
+ my $guidata; # packed the xml internally, goes here
+ local $/; # which makes this undefined for this sub
+ $guidata = <main::DATA>; # which makes this slurp the entire "file"
+ $builder = Gtk3::Builder->new_from_string($guidata,length($guidata));
+ $mainwin = $builder->get_object('mainwin'); #@@@ assumes main window is called mainwin
+ $builder->connect_signals(undef);
+ $mainwin->set_screen( $mainwin->get_screen() ); #??? from an example.  Seems redundant?
+ $mainwin->signal_connect(destroy => sub {Gtk3->main_quit});
+ $mainwin->show_all();
+}
+####################################################################
+sub on_Lunits_changed
+{
+    if (4 == CountInputs())
+    { # we've computed and are now just looking at scales after that
+     $Lscale = $Lscaler->get_active_id();
+     $Lvalue = $Lnorm / 10**$Lscale;
+     $Lvaluer->set_text($Lvalue); 
+    }
+}
+####################################################################
+sub on_Cunits_changed
+{
+    if (4 == CountInputs())
+    { # we've computed and are now just looking at scales after that
+     $Cscale = $Cscaler->get_active_id();
+     $Cvalue = $Cnorm / 10**$Cscale;
+     $Cvaluer->set_text($Cvalue); 
+    }
+}
+####################################################################
+sub on_Funits_changed
+{
+    if (4 == CountInputs())
+    { # we've computed and are now just looking at scales after that
+     $Fscale = $Fscaler->get_active_id();
+     $Fvalue = $Fnorm / 10**$Fscale;
+     $Fvaluer->set_text($Fvalue); 
+    }
+}
+####################################################################
+sub on_Zunits_changed
+{
+    if (4 == CountInputs())
+    { # we've computed and are now just looking at scales after that
+     $Zscale = $Zscaler->get_active_id();
+     $Zvalue = $Znorm / 10**$Zscale;
+     $Zvaluer->set_text($Zvalue); 
+    }
+}
+####################################################################
+sub on_keypress
+{
+  my ($a,$b) = @_;
+  my $c =  $b->keyval;
+	say "keypress c:$c" if $debug;
+	if (65307 == $c) #@@@ hardcoded appears to be the magic number for esc
+	{	
+	 clearvars();
+	 clearGUI();
+	}
+}
+####################################################################
+
+sub initialize 
+{ # put all your init code here
+#	createguifile(); # you'll start out with this
+	createguilocal(); # but use this one when shipping.  XML after the __END__ tag
+    getGUIrefs(); # get references to the widgets for later messing around
+    # setup any variables here
+    on_Reset_pressed(); # start as if reset
+    clearGUI(); # you may want to put in some content you didn't do in Glade?
+}
+####################################################################
+
+
+####################################################################
+############################ Main ##################################
+####################################################################
+
+initialize();
+say "Compiled OK." if $debug; # way to say we made it.
+ Gtk3->main; # GUI event forever loop - when we quit, we fall out and exit
+
+# when your gui is settled, copy the xml from the glade file to below the end tag and use createguilocal
+#instead.  Harder to change, easier to ship.
+ __END__
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.22.1 -->
+<interface>
+  <requires lib="gtk+" version="3.20"/>
+  <object class="GtkDialog" id="ErrorMonologue">
+    <property name="can_focus">False</property>
+    <property name="type_hint">dialog</property>
+    <child>
+      <placeholder/>
+    </child>
+    <child internal-child="vbox">
+      <object class="GtkBox">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">2</property>
+        <child internal-child="action_area">
+          <object class="GtkButtonBox">
+            <property name="can_focus">False</property>
+            <property name="layout_style">end</property>
+            <child>
+              <placeholder/>
+            </child>
+            <child>
+              <object class="GtkButton" id="dialogOK">
+                <property name="label" translatable="yes">OK</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <signal name="clicked" handler="on_dialogOK_clicked" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel" id="ErrorMessage">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="label" translatable="yes">Error	Error	Error
+
+You must only give me 2 known values.  Three won't work,,
+and  neither will just one - I'm just perl, not a mind reader.
+That shall not call Calculate with nothing, or more than 2 
+known values.  
+Else the holy hand grenade of compute goes boom.
+
+I'll now reset these entries, try again.</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+  <object class="GtkApplicationWindow" id="mainwin">
+    <property name="can_focus">False</property>
+    <child>
+      <placeholder/>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <property name="visible">True</property>
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="label" translatable="yes">Reactance and resonance calculator, enter 2 values to compute others.</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkGrid">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <child>
+              <object class="GtkEntry" id="Lvalue">
+                <property name="name">Lvalue</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="tooltip_text" translatable="yes">Inductance</property>
+                <property name="secondary_icon_tooltip_text" translatable="yes">Inductance</property>
+                <property name="input_purpose">number</property>
+                <signal name="activate" handler="on_Calculate_pressed" after="yes" swapped="no"/>
+                <signal name="key-release-event" handler="on_keypress" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEntry" id="Cvalue">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="tooltip_text" translatable="yes">Capacitance</property>
+                <signal name="activate" handler="on_Calculate_pressed" after="yes" swapped="no"/>
+                <signal name="key-release-event" handler="on_keypress" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEntry" id="Fvalue">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="tooltip_text" translatable="yes">Frequency</property>
+                <signal name="activate" handler="on_Calculate_pressed" after="yes" swapped="no"/>
+                <signal name="key-release-event" handler="on_keypress" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEntry" id="Zvalue">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="tooltip_text" translatable="yes">|z|</property>
+                <signal name="activate" handler="on_Calculate_pressed" after="yes" swapped="no"/>
+                <signal name="key-release-event" handler="on_keypress" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">3</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="Reset">
+                <property name="label" translatable="yes">Reset</property>
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="receives_default">True</property>
+                <property name="tooltip_text" translatable="yes">Clear all entries; also actiated by esc key in any entry box.</property>
+                <signal name="pressed" handler="on_Reset_pressed" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">4</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="Calculate">
+                <property name="label" translatable="yes">Calculate</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="tooltip_text" translatable="yes">Calculate from two knowns.  Activates from enter in any entry box.</property>
+                <signal name="pressed" handler="on_Calculate_pressed" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">4</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="Lunits">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">Inductance units</property>
+                <property name="hexpand">True</property>
+                <property name="active">3</property>
+                <property name="active_id">-3</property>
+                <items>
+                  <item id="-12" translatable="yes">Picohenries</item>
+                  <item id="-9" translatable="yes">Nanohenries</item>
+                  <item id="-6" translatable="yes">Microhenries</item>
+                  <item id="-3" translatable="yes">Millihenries</item>
+                  <item id="0" translatable="yes">Henries</item>
+                </items>
+                <signal name="changed" handler="on_Lunits_changed" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="Cunits">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">Capacitance units</property>
+                <property name="active">2</property>
+                <property name="active_id">-6</property>
+                <items>
+                  <item id="-12" translatable="yes">Picofarads</item>
+                  <item id="-9" translatable="yes">Nanofarads</item>
+                  <item id="-6" translatable="yes">Microfarads</item>
+                  <item id="0" translatable="yes">Farads</item>
+                </items>
+                <signal name="changed" handler="on_Cunits_changed" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="Funits">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">Frequency units</property>
+                <property name="active">1</property>
+                <property name="active_id">6</property>
+                <items>
+                  <item id="9" translatable="yes">GHz</item>
+                  <item id="6" translatable="yes">MHz</item>
+                  <item id="3" translatable="yes">KHz</item>
+                  <item id="0" translatable="yes">Hz</item>
+                </items>
+                <signal name="changed" handler="on_Funits_changed" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="Zunits">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">|z| units</property>
+                <property name="active">1</property>
+                <property name="active_id">3</property>
+                <items>
+                  <item id="6" translatable="yes">Megohms</item>
+                  <item id="3" translatable="yes">Kohms</item>
+                  <item id="0" translatable="yes">Ohms</item>
+                </items>
+                <signal name="changed" handler="on_Zunits_changed" after="yes" swapped="no"/>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">3</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
