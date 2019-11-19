@@ -18,3 +18,7 @@ actual utilities must be executable.
 I find these actually useful now and then.  To use them, the general idea is to put in just enough known values to
 allow the computation of the others. If you over-specify, you'll get an error warning, no big deal.
 
+They look like this:
+[ohms screenshot](https://github.com/dcfusor/EE-utils/blob/master/Ohms.png)
+[reactance screenshot](https://github.com/dcfusor/EE-utils/blob/master/reactance.png)
+
